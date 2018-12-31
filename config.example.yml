@@ -1,0 +1,6 @@
+url: http://wordpress.example.com
+oauthCallback: oob
+consumerKey: <Field Client Key>
+consumerSecret: <Field Client Secret>
+oauthToken: <Final Token>
+oauthTokenSecret: <Final Token Secret>
