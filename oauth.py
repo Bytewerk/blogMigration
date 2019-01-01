@@ -236,6 +236,192 @@ def fn_test(oauth, config):
     
     c.close()
 
+def fn_transfer(oauth, config, args):
+
+    blogEntries = []
+    directory = args.directory
+    createUser = args.create_users
+    
+    print('Loading posts...', end='')
+    for entry in os.scandir(directory):
+        if (not entry.is_file()):
+            continue
+        if (entry.name == 'authors.yml'):
+            continue
+        if (entry.name == 'categories.yml'):
+            continue
+        if (not(entry.name.endswith('.yml'))):
+            continue
+        with open(entry.path, 'r', encoding='utf-8') as f:
+            data = yaml.load(f)
+        blogEntries.append(data)
+
+    print('Done.')
+    
+    print('Extracting post categories...')
+    # extract categories
+    categories = set()
+    
+    for entry in blogEntries:
+        categories.update(entry['categories'])
+    
+    # extract authors
+    with open(directory + '/authors.yml', 'r', encoding='utf-8') as f:
+        authorMap = yaml.load(f)
+    
+    authorIds = set()
+    print('Extracting post authors...')
+    
+    for entry in blogEntries:
+        authorIds.add(entry['author_id'])
+    
+    if (any([e for e in authorIds if e not in authorMap])):
+        print('Error: Author ID {0:d} unmapped.')
+        return -2
+    
+    # trim author map
+    for k in authorMap:
+        if (k not in authorIds):
+            del authorMap[k]
+    
+    # setup
+    site = config['url']
+    site_root = site + '/wp-json{0:s}'
+    
+    print('Retrieving existing post categories...')
+    
+    query_params = {
+        'per_page': str(100),
+    }
+    buffer = BytesIO()
+    
+    c = pycurl.Curl()
+    url = site_root.format(categories_ep)
+    c.setopt(c.URL, url + '?' + urlencode(query_params))
+    
+    c.setopt(c.CAINFO, certifi.where())
+    c.setopt(c.WRITEDATA, buffer)
+    c.setopt(c.HTTPHEADER, [oauth.getOAuthHeader('GET', url, query_params)])
+    c.perform()
+ 
+    # HTTP response code, e.g. 200.
+    status = c.getinfo(c.RESPONSE_CODE)
+    if (status != 200):
+        print('Retrieving existing categories failed...')
+        return -1
+    
+    response = json.loads(buffer.getvalue().decode('UTF-8'))
+    blogCategories = {}
+    for category in response:
+        blogCategories[category['name']] = category['id']
+    
+    category_map = {k: None for k in categories}
+    for k in category_map:
+        if (k in blogCategories):
+            category_map[k] = blogCategories[k]
+    
+    for k, v in category_map.items():
+        if (v is None):
+            print('Creating category {0:s}...'.format(k))
+            
+            json_data = {
+                'name': k,
+            }
+            post_params = {}
+            buffer = BytesIO()
+            c.setopt(c.URL, url)
+            c.setopt(c.WRITEDATA, buffer)
+            c.setopt(c.HTTPHEADER, [oauth.getOAuthHeader('POST', url), 'Content-Type: application/json; charset=utf-8'])
+            c.setopt(c.POSTFIELDS, json.dumps(json_data))
+            c.perform()
+            
+            status = c.getinfo(c.RESPONSE_CODE)
+            if (status != 201):
+                print('Creating category failed.')
+                print(buffer.getvalue().decode('UTF-8'))
+                return -1
+            
+            response = json.loads(buffer.getvalue().decode('UTF-8'))
+            category_map[k] = response['id']
+            print('Category {0:s} is using ID {1:d}'.format(k, response['id']))
+            
+        else:
+            print('Category {0:s} is using ID {1:d}'.format(k, v))
+    
+    print('Retrieving existing users...')
+    
+    query_params = {
+        'per_page': str(100),
+    }
+    buffer = BytesIO()
+    
+    c = pycurl.Curl()
+    url = site_root.format(users_ep)
+    c.setopt(c.URL, url + '?' + urlencode(query_params))
+    
+    c.setopt(c.CAINFO, certifi.where())
+    c.setopt(c.WRITEDATA, buffer)
+    c.setopt(c.HTTPHEADER, [oauth.getOAuthHeader('GET', url, query_params)])
+    c.perform()
+ 
+    # HTTP response code, e.g. 200.
+    status = c.getinfo(c.RESPONSE_CODE)
+    if (status != 200):
+        print('Retrieving existing users failed...')
+        return -1
+    
+    response = json.loads(buffer.getvalue().decode('UTF-8'))
+    blogUsers = {}
+    
+    for user in response:
+        blogUsers[user['slug']] = user['id']
+    
+    if (not(createUser)):
+        unmappedUsers = [(k, v['slug']) for k, v in authorMap.items() if v['slug'] not in blogUsers]
+        if (any(unmappedUsers)):
+            for id, slug in unmappedUsers:
+                print('Error: user {0:s} does not exist on blog.'.format(slug))
+            return -2
+    else:
+        for k, v in authorMap.items():
+            if (v['slug'] in blogUsers):
+                continue
+            
+            print('Creating user {0:s}...'.format(v['slug']))
+            
+            json_data = {
+                'name':     v['name'],
+                'slug':     v['slug'],
+                'username': v['slug'],
+                'email':    v['slug'] + '@example.com',
+                'password': 'passw9rd!',
+            }
+            post_params = {}
+            buffer = BytesIO()
+            c.setopt(c.URL, url)
+            c.setopt(c.WRITEDATA, buffer)
+            c.setopt(c.HTTPHEADER, [oauth.getOAuthHeader('POST', url), 'Content-Type: application/json; charset=utf-8'])
+            c.setopt(c.POSTFIELDS, json.dumps(json_data).encode('UTF-8'))
+            c.perform()
+            
+            status = c.getinfo(c.RESPONSE_CODE)
+            if (status != 201):
+                print('Creating user failed.')
+                print(buffer.getvalue().decode('UTF-8'))
+                return -1
+            
+            response = json.loads(buffer.getvalue().decode('UTF-8'))
+            blogUsers[response['slug']] = response['id']
+            print('User {0:s} is using ID {1:d}'.format(response['slug'], response['id']))
+    
+    for k, v in authorMap.items():
+        print('User {0:s} is using ID {1:d}'.format(v['slug'], blogUsers[v['slug']]))
+    
+    # process posts
+    
+    
+    return 0
+    
 def checkConfig(config):
     
     return all([k in config for k in ['url', 'consumerKey', 'consumerSecret']])
@@ -246,6 +432,9 @@ def main():
     parser.add_argument('--config', default='config.yml')
     subparsers = parser.add_subparsers(title='command', dest='subcommand', help='sub-command')
     parser_register = subparsers.add_parser('register')
+    parser_transfer = subparsers.add_parser('transfer')
+    parser_transfer.add_argument('--create-users', action='store_true', default=False)
+    parser_transfer.add_argument('directory', default=None)
     parser_test = subparsers.add_parser('test')
     
     args = parser.parse_args()
@@ -269,8 +458,10 @@ def main():
     
     if (args.subcommand == 'register'):
         return fn_register(oauth, config)
-    elif ( args.subcommand == 'test'):
+    elif (args.subcommand == 'test'):
         return fn_test(oauth, config)
+    elif (args.subcommand == 'transfer'):
+        return fn_transfer(oauth, config, args)
     else:
         print('Unknown command \'{0:s}\'...'.format(args.subcommand))
         return -2
