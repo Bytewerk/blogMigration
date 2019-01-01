@@ -67,7 +67,7 @@ class OAuth10a:
         parts += ['{0:s}="{1:s}"'.format(quote(k, safe='-._~'), quote(v, safe='-._~')) for k, v in OAuth10a._sortOAuthParams(list(oauth_params.items()))]
         return 'Authorization: OAuth ' + ', '.join(parts)
     
-    def getOAuthHeader(self, method, url, query_post_params, additional_oauth_params = {}):
+    def getOAuthHeader(self, method, url, query_post_params = {}, additional_oauth_params = {}):
     
         oauth_params = self._getOAuthParams()
         oauth_params.update(additional_oauth_params)
