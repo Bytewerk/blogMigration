@@ -218,7 +218,7 @@ def fn_test(oauth, config):
     c.setopt(c.URL, url)
     c.setopt(pycurl.VERBOSE, 1)
     c.setopt(c.WRITEDATA, buffer)
-    c.setopt(c.HTTPHEADER, [get_oauth_header(oauth_params), 'Content-Type: application/json'])
+    c.setopt(c.HTTPHEADER, [get_oauth_header(oauth_params), 'Content-Type: application/json; charset=utf-8'])
     c.setopt(c.POSTFIELDS, json.dumps(json_data))
     c.perform()
 
@@ -251,7 +251,7 @@ def main():
     args = parser.parse_args()
     
     try:
-        with open(args.config, 'r') as f:
+        with open(args.config, 'r', encoding='utf-8') as f:
             config = yaml.load(f)
     except Exception as e:
         print('Could not load configuration \'{0:s}\'...'.format(args.config))
