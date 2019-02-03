@@ -430,7 +430,7 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default='config.yml')
-    subparsers = parser.add_subparsers(title='command', dest='subcommand', help='sub-command')
+    subparsers = parser.add_subparsers(title='command', dest='subcommand', help='sub-command', required=True)
     parser_register = subparsers.add_parser('register')
     parser_transfer = subparsers.add_parser('transfer')
     parser_transfer.add_argument('--create-users', action='store_true', default=False)
