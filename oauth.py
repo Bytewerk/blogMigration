@@ -10,9 +10,10 @@ import json
 import locale
 import pycurl
 import random
+import re
 import yaml
 from base64 import b64encode
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO
 from hashlib import sha1
 from urllib.parse import urlencode, quote, parse_qs
@@ -178,50 +179,20 @@ def fn_test(oauth, config):
     site_root = site + '/wp-json{0:s}'
     
     c = pycurl.Curl()
-    buffer = BytesIO()
-    url = site_root.format(categories_ep)
-    c.setopt(c.URL, url)
-    
-    post_params = {}
-    c.setopt(c.CAINFO, certifi.where())
-    c.setopt(c.WRITEDATA, buffer)
-    c.setopt(c.HTTPHEADER, [oauth.getOAuthHeader('GET', url, post_params)])
-    c.perform()
- 
-    # HTTP response code, e.g. 200.
-    status = c.getinfo(c.RESPONSE_CODE)
-    if (status == 200):
-        print('Erfolg!!!')
-    print('Status: %d' % c.getinfo(c.RESPONSE_CODE))
-    # Elapsed time for the transfer.
-    print('Status: %f' % c.getinfo(c.TOTAL_TIME))
-    
-    print('-'*72)
-    print(buffer.getvalue().decode('UTF-8'))
-    print('-'*72)
-    
-    return 0
-    
-    print('-'*72)
-    print('Creating Category \'Derp\'...')
-    print('-'*72)
+    url = site_root.format(posts_ep) + '/483'
     
     json_data = {
-        'name': 'Derp',
+        'comment_status': 'open',
     }
     post_params = {}
-    update_oauth_params(oauth_params)
-    if ('oauth_signature' in oauth_params):
-        del oauth_params['oauth_signature']
-    oauth_params['oauth_signature'] = get_oauth_signature('POST', url, oauth_params, post_params, oauth_token_secret)
     buffer = BytesIO()
+    c.setopt(c.CAINFO, certifi.where())
     c.setopt(c.URL, url)
-    c.setopt(pycurl.VERBOSE, 1)
     c.setopt(c.WRITEDATA, buffer)
-    c.setopt(c.HTTPHEADER, [get_oauth_header(oauth_params), 'Content-Type: application/json; charset=utf-8'])
+    c.setopt(c.HTTPHEADER, [oauth.getOAuthHeader('POST', url), 'Content-Type: application/json; charset=utf-8'])
     c.setopt(c.POSTFIELDS, json.dumps(json_data))
     c.perform()
-
+    
     # HTTP response code, e.g. 200.
     status = c.getinfo(c.RESPONSE_CODE)
     if (status == 200):
@@ -235,6 +206,8 @@ def fn_test(oauth, config):
     print('-'*72)
     
     c.close()
+    
+    return 0
 
 def fn_transfer(oauth, config, args):
 
@@ -418,7 +391,116 @@ def fn_transfer(oauth, config, args):
         print('User {0:s} is using ID {1:d}'.format(v['slug'], blogUsers[v['slug']]))
     
     # process posts
+    url = site_root.format(posts_ep)
     
+    for entry in blogEntries:
+        
+        title = entry['title']
+        oldAuthorId = entry['author_id']
+        categories = entry['categories']
+        comments = [] if ('entries' not in entry['comments']) else entry['comments']['entries']
+        content = entry['content']
+        date = datetime.fromisoformat(entry['date'])
+        
+        print('Processing \'{0:s}\' with {1:d} comments...'.format(title, len(comments)))
+        
+        categoryIds = [category_map[c] for c in categories]
+        authorId = blogUsers[authorMap[oldAuthorId]['slug']]
+        
+        # rework content
+        #
+        # \r\n<br/>\r\n --> \r\n
+        # <p>\space*</p> --> kill
+        # \space+[word]+\r\n[word]+\space+ --> [word]+ [word+]
+        # \space+-\r\n[word]+ --> \space+- [word]+
+        content = re.sub(r'\r\n<br/>\r\n', r'\r\n', content)
+        content = re.sub(r'<p>\s*</p>', r'', content)
+        content = re.sub(r'\xA0', r'', content) #nbsp;
+        content = re.sub(r'(\w+)\r\n<a(.*)</a>\r\n(\w+)', r'\1 <a\2</a> \3', content)
+        content = re.sub(r'</a>\r\n([.:,])', r'</a>\1', content)
+        content = re.sub(r'(\s+)([,.:\w\-\(\)]+)\s*\r\n(?!\d)([.,:\w\-\(\)]+)(\s)', r'\1\2 \3\4', content)
+        content = re.sub(r'(\s+)([,.:\w\-\(\)]+)\r\n\s*(?!\d)([.,:\w\-\(\)]+)(\s)', r'\1\2 \3\4', content)
+        content = re.sub(r'(\s+)-\r\n(\s+)([.,\w\-\(\)]+)', r'\1-\2\3', content)
+        
+        json_data = {
+            'date_gmt':       date.astimezone(timezone.utc).isoformat(),
+            'status':         'publish',
+            'title':          title,
+            'content':        content,
+            'author':         str(authorId),
+            'comment_status': 'closed' if (comments == []) else 'open',
+            'ping_status':    'closed',
+            'format':         'standard',
+            'categories':     [str(e) for e in categoryIds]
+        }
+        post_params = {}
+        buffer = BytesIO()
+        c.setopt(c.URL, url)
+        c.setopt(c.WRITEDATA, buffer)
+        c.setopt(c.HTTPHEADER, [oauth.getOAuthHeader('POST', url), 'Content-Type: application/json; charset=utf-8'])
+        c.setopt(c.POSTFIELDS, json.dumps(json_data))
+        c.perform()
+        
+        status = c.getinfo(c.RESPONSE_CODE)
+        if (status != 201):
+            print('   Creating post \'{0:s}\' failed.'.format(title))
+            print(buffer.getvalue().decode('UTF-8'))
+            return -1
+        
+        response = json.loads(buffer.getvalue().decode('UTF-8'))
+        post_id = response['id']
+        
+        print('    Created post #{0:d}.'.format(post_id))
+        
+        if (comments != []):
+            # create comments
+            comment_url = site_root.format(comments_ep)
+            
+            for comment_ix, comment in enumerate(comments):
+                
+                comment_author = comment['authorName']
+                comment_date = datetime.fromisoformat(comment['date'])
+                comment_content = comment['content']
+                
+                json_data = {
+                    'date_gmt':       comment_date.astimezone(timezone.utc).isoformat(),
+                    'author_name':    comment_author,
+                    'author_email':   'sysmail@bingo-ev.de',
+                    'content':        comment_content,
+                    'post':           str(post_id),
+                    'status':         'approve',
+                }
+                post_params = {}
+                buffer = BytesIO()
+                c.setopt(c.URL, comment_url)
+                c.setopt(c.WRITEDATA, buffer)
+                c.setopt(c.HTTPHEADER, [oauth.getOAuthHeader('POST', comment_url), 'Content-Type: application/json; charset=utf-8'])
+                c.setopt(c.POSTFIELDS, json.dumps(json_data))
+                c.perform()
+                
+                status = c.getinfo(c.RESPONSE_CODE)
+                if (status != 201):
+                    print('   Creating comment {0:d} failed.'.format(comment_ix))
+                    print(buffer.getvalue().decode('UTF-8'))
+                    return -1
+            
+            post_url = '{0:s}/{1:d}'.format(site_root.format(posts_ep), post_id)
+            json_data = {
+                'comment_status': 'closed',
+            }
+            post_params = {}
+            buffer = BytesIO()
+            c.setopt(c.URL, post_url)
+            c.setopt(c.WRITEDATA, buffer)
+            c.setopt(c.HTTPHEADER, [oauth.getOAuthHeader('POST', post_url), 'Content-Type: application/json; charset=utf-8'])
+            c.setopt(c.POSTFIELDS, json.dumps(json_data))
+            c.perform()
+            
+            status = c.getinfo(c.RESPONSE_CODE)
+            if (status != 200):
+                print('    Closing comments for post \'{0:s}\' failed.'.format(title))
+                print(buffer.getvalue().decode('UTF-8'))
+                return -1
     
     return 0
     
