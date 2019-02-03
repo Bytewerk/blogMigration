@@ -1,0 +1,5 @@
+beautifulsoup4==4.6.3
+certifi==2018.11.29
+lxml==4.2.5
+pycurl==7.43.1
+PyYAML==3.13
