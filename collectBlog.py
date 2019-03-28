@@ -31,6 +31,7 @@ germany_summertime = {
     2016: {'start': {'day': 27, 'month': 3}, 'end': {'day': 30, 'month': 10}},
     2017: {'start': {'day': 26, 'month': 3}, 'end': {'day': 29, 'month': 10}},
     2018: {'start': {'day': 25, 'month': 3}, 'end': {'day': 28, 'month': 10}},
+    2019: {'start': {'day': 31, 'month': 3}, 'end': {'day': 27, 'month': 10}},
 }
 
 def getTimezone(date, time):
